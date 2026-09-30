@@ -1,6 +1,8 @@
-# decide — typed decision engine CLI
+# decide — typed decision engine CLI (multi-arch: linux/amd64, linux/arm64)
 #
-# Build:  docker build -t wallydk24/decide .
+# Build (example: arm64 for Raspberry Pi):
+#   podman build --platform linux/arm64 --build-arg TARGETARCH=arm64 \
+#     -t wallydk24/decide:arm64 .
 # Try:    docker run --rm wallydk24/decide --help
 # Decide: docker run --rm -e DECIDE_LIQUID_API_KEY=$KEY wallydk24/decide \
 #           --set spam_check --question "Is this spam?" --input /data/msg.txt
@@ -11,17 +13,18 @@
 #
 # The bundled sets.yml ships as default outcome sets; override with:
 #   -v ./my-sets.yml:/app/sets.yml  or  --outcomes /path/inside/container
+#
+# deps/ holds pre-unpacked `requests` trees per arch (amd64/arm64) so the
+# build needs no network and no emulation: COPY is arch-independent.
 
 FROM python:3.12-slim
-
-# requests is vendored as wheels (see wheels/) so the build needs no network.
-COPY wheels/ /wheels/
-RUN pip install --no-cache-dir --no-index /wheels/*.whl && rm -rf /wheels
+ARG TARGETARCH=amd64
+COPY deps/${TARGETARCH}/ /usr/local/lib/python3.12/site-packages/
 
 WORKDIR /app
 COPY decide.py sets.yml ./
-RUN useradd -m decide && chown -R decide:decide /app
-USER decide
+ENV HOME=/tmp
+USER 1000
 
 ENTRYPOINT ["python3", "/app/decide.py"]
 CMD ["--help"]
