@@ -1,0 +1,4 @@
+Our production API is returning 500 errors on every request. All
+customers are affected and the status page is lit up. Revenue impact is
+roughly $12,000 per hour. This started 15 minutes ago and the on-call
+engineer has not responded yet.

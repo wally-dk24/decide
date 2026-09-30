@@ -1,0 +1,35 @@
+# Outcome sets for `decide`. Edit freely — this file is yours.
+#
+# Each set:
+#   type:       noul | choice | score
+#   question:   the instructions sent to the decision model
+#   threshold:  escalate to the frontier LLM when confidence falls below this (0..1)
+#   options:    (choice only) id -> description
+#   levels:     (score only) ordered list of level descriptions, index 0..N
+
+sets:
+  spam_check:
+    type: noul
+    question: "Is this message spam?"
+    threshold: 0.8
+
+  intent:
+    type: choice
+    question: "What is the primary topic of this message?"
+    threshold: 0.7
+    options:
+      billing: "Questions about charges, invoices, refunds, or payment methods"
+      technical: "Bug reports, feature requests, or how-to questions about the product"
+      shipping: "Order status, delivery tracking, or shipping address changes"
+      account: "Login issues, profile updates, or subscription management"
+      other: "Anything that does not fit the categories above"
+
+  urgency:
+    type: score
+    question: "How urgent is this message?"
+    threshold: 0.7
+    levels:
+      - "0 = can wait: no immediate business impact, normal queue"
+      - "1 = should handle today: minor inconvenience or non-blocking issue"
+      - "2 = time-sensitive: noticeable customer impact, needs attention within hours"
+      - "3 = blocking: critical failure affecting customers or revenue"
