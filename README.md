@@ -137,3 +137,14 @@ Start at **0.8** for everything. Then adjust for asymmetric costs:
 missing input, no backend configured, or a backend failure with no working
 fallback. Warnings go to stderr; the `winner:`/`confidence:`/`backend:` /
 `escalated:` lines on stdout are trivially parseable by scripts.
+
+## Docker
+
+```bash
+docker pull wallydk24/decide
+docker run --rm -e DECIDE_LIQUID_API_KEY=$KEY wallydk24/decide \
+  --set spam_check --question "Is this spam?" --input /data/msg.txt
+```
+
+Keys are never baked into the image — pass them at runtime. The bundled
+`sets.yml` ships as defaults; mount your own with `-v ./my-sets.yml:/app/sets.yml`.
