@@ -8,7 +8,7 @@ escalation (exactly once), and a signed JSONL decision ledger.
 DECIDE_LIQUID_API_KEY (primary) and/or DECIDE_LLM_URL/KEY/MODEL
 (OpenAI-compatible fallback + escalation). Keys live only in env vars.
 """
-import argparse, hashlib, json, os, re, sys
+import argparse, hashlib, html, json, os, re, sys
 from datetime import datetime, timedelta
 
 try:
@@ -516,18 +516,239 @@ def main(argv=None):
     lp = sub.add_parser("ledger", help="show recent decisions")
     lp.add_argument("--since", default=None, help="e.g. 30m, 24h, 7d")
     sub.add_parser("calib", help="escalation rate and labeled accuracy per set")
+    sv = sub.add_parser("serve", help="run the branded web UI")
+    sv.add_argument("--host", default="0.0.0.0", help="bind host (default 0.0.0.0)")
+    sv.add_argument("--port", type=int, default=8080, help="port (default 8080)")
     args = ap.parse_args(argv)
     try:
         if args.command == "ledger":
             cmd_ledger(args)
         elif args.command == "calib":
             cmd_calib(args)
+        elif args.command == "serve":
+            cmd_serve(args)
         else:
             cmd_decide(args)
     except DecideError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
     return 0
+
+
+# ----------------------------------------------------------------------------
+# Serve mode: a small branded web UI over the same decision engine.
+#
+#   python3 decide.py serve --port 8080
+#
+#   GET  /         decision form + recent ledger entries
+#   POST /decide   run the decision, render winner + distribution bars
+#   GET  /healthz  "ok"
+#
+# Skin comes from the vendored wally-brand copy (brand/page.py).
+# ----------------------------------------------------------------------------
+
+SERVE_TAGLINE = "Typed decisions over text"
+
+
+def _serve_shell(tool_title, content, page_title=None):
+    from brand.page import render
+    return render("decide", SERVE_TAGLINE, page_title or tool_title, content,
+                  footer_extra="decide " + VERSION)
+
+
+def _serve_form_content(sets, err=None):
+    opts = "\n".join(
+        '        <option value="%s">%s (%s)</option>'
+        % (n, html.escape(n), html.escape(str(sets[n].get("type", "?"))))
+        for n in sorted(sets))
+    err_html = ""
+    if err:
+        err_html = ('<div class="wb-card"><span class="wb-badge b-red">error</span>'
+                    '<p>%s</p></div>\n') % html.escape(err)
+    recent = read_ledger()[-8:][::-1]
+    recent_html = ""
+    if recent:
+        rows = []
+        for r in recent:
+            rows.append(
+                '<div class="wb-dist-row"><div class="wb-dist-label">%s</div>'
+                '<div style="font-size:14px"><span class="wb-badge">%s</span> '
+                '<strong>%s</strong> <span style="color:var(--wb-muted)">conf %.2f · %s</span>'
+                '</div></div>'
+                % (html.escape(r["ts"][:16].replace("T", " ")),
+                   html.escape(r["set"]), html.escape(str(r["winner"])),
+                   r["confidence"], html.escape(r["backend"])))
+        recent_html = ('<div class="wb-card"><h2>Recent decisions</h2>\n'
+                       '<div class="wb-dist">\n' + "\n".join(rows) +
+                       '\n</div></div>\n')
+    return err_html + """<div class="wb-card">
+  <h2>New decision</h2>
+  <p class="wb-sub">Pick an outcome set, paste the text, and decide.</p>
+  <form action="/decide" method="post">
+    <div class="wb-field">
+      <label for="set">Outcome set</label>
+      <select class="wb-select" id="set" name="set">
+%s
+      </select>
+    </div>
+    <div class="wb-field">
+      <label for="text">Text to decide about</label>
+      <textarea class="wb-textarea" id="text" name="text" required
+        placeholder="Paste the message, email, or note here&hellip;"></textarea>
+    </div>
+    <div class="wb-field">
+      <label for="question">Question override (optional)</label>
+      <input class="wb-input" id="question" name="question"
+        placeholder="Defaults to the set&rsquo;s question">
+    </div>
+    <div class="wb-btn-row">
+      <button class="wb-btn wb-btn-primary" type="submit">Decide</button>
+    </div>
+  </form>
+</div>
+""" % opts + recent_html
+
+
+def _serve_result_content(record, qdef, state):
+    dist = record["distribution"]
+    bars = []
+    for k, v in sorted(dist.items(), key=lambda kv: kv[1], reverse=True):
+        label = str(k)
+        if qdef.get("type") == "score":
+            try:
+                label = qdef["levels"][int(k)]
+            except (IndexError, ValueError, TypeError):
+                pass
+        cls = ""
+        if qdef.get("type") == "noul":
+            cls = " fill-green" if k == "yes" else " fill-red"
+        bars.append(
+            '    <div class="wb-dist-row"><div class="wb-dist-label">%s</div>'
+            '<div class="wb-dist-track"><div class="wb-dist-fill%s" style="width:%.1f%%">'
+            '</div></div><div class="wb-dist-val">%.3f</div></div>'
+            % (html.escape(label), cls, 100 * v, v))
+    esc = ' <span class="wb-badge b-amber">escalated</span>' if record["escalated"] else ""
+    score_row = ("" if "score" not in record
+                 else "<dt>score</dt><dd>%.3f</dd>\n      " % record["score"])
+    excerpt = state if len(state) <= 280 else state[:280] + "…"
+    raw = html.escape(json.dumps(record, indent=2))
+    return """<div class="wb-card">
+  <h2><span class="wb-badge b-green">%s</span>%s</h2>
+  <p class="wb-sub">%s</p>
+  <div class="wb-dist">
+%s
+  </div>
+  <dl class="wb-kv">
+      <dt>confidence</dt><dd>%.3f</dd>
+      <dt>backend</dt><dd>%s</dd>
+      %s<dt>input sha</dt><dd>%s</dd>
+  </dl>
+</div>
+<div class="wb-card">
+  <h2>Input</h2>
+  <div class="wb-term">%s</div>
+</div>
+<div class="wb-card">
+  <h2>Record</h2>
+  <p class="wb-sub">Appended to the decision ledger.</p>
+  <div class="wb-term">%s</div>
+  <div class="wb-btn-row">
+    <a class="wb-btn" href="/">Decide another</a>
+  </div>
+</div>
+""" % (html.escape(str(record["winner"])), esc,
+       html.escape(record["question"]),
+       "\n".join(bars),
+       record["confidence"], html.escape(record["backend"]),
+       score_row, record["input_sha256"][:16],
+       html.escape(excerpt), raw)
+
+
+def make_serve_handler(sets):
+    from http.server import BaseHTTPRequestHandler
+    from urllib.parse import urlparse, parse_qs
+    from brand.page import brand_asset
+
+    class DecideHandler(BaseHTTPRequestHandler):
+        server_version = "decide/" + VERSION
+
+        def log_message(self, fmt, *args):  # quieter logs
+            sys.stderr.write("decide: %s\n" % (fmt % args))
+
+        def _send(self, body, ctype="text/html; charset=utf-8", code=200):
+            data = body.encode("utf-8") if isinstance(body, str) else body
+            self.send_response(code)
+            self.send_header("Content-Type", ctype)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _page(self, content, title, code=200):
+            self._send(_serve_shell(title, content, page_title=title), code=code)
+
+        def do_GET(self):
+            path = urlparse(self.path).path
+            asset = brand_asset(path)
+            if asset:
+                ctype, data = asset
+                return self._send(data, ctype)
+            if path == "/healthz":
+                return self._send("ok", "text/plain; charset=utf-8")
+            if path in ("/", "/index.html"):
+                return self._page(_serve_form_content(sets), "Decide")
+            self.send_error(404)
+
+        def do_POST(self):
+            if urlparse(self.path).path != "/decide":
+                self.send_error(404)
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                length = 0
+            if length <= 0 or length > 2 * 1024 * 1024:
+                self.send_error(400, "bad form size")
+                return
+            form = parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
+            set_name = (form.get("set", [""])[0] or "").strip()
+            text = form.get("text", [""])[0] or ""
+            question = (form.get("question", [""])[0] or "").strip() or None
+            if set_name not in sets:
+                return self._page(
+                    _serve_form_content(sets, "unknown set '%s'" % set_name),
+                    "Decide", code=400)
+            if not text.strip():
+                return self._page(
+                    _serve_form_content(sets, "paste some text to decide about"),
+                    "Decide", code=400)
+            ns = argparse.Namespace(question=question, dry_run=False, keep_input=False)
+            try:
+                record = run_decision(text, set_name, sets[set_name], ns)
+            except DecideError as e:
+                return self._page(_serve_form_content(sets, str(e)),
+                                  "Decide", code=502)
+            self._page(_serve_result_content(record, sets[set_name], text),
+                       "Decision — " + set_name)
+
+    return DecideHandler
+
+
+def cmd_serve(args):
+    from http.server import ThreadingHTTPServer
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    sets = load_sets(find_sets_file(args.outcomes))
+    if not sets:
+        raise DecideError("no outcome sets found")
+    handler = make_serve_handler(sets)
+    httpd = ThreadingHTTPServer((args.host, args.port), handler)
+    httpd.daemon_threads = True
+    host = "localhost" if args.host == "0.0.0.0" else args.host
+    print("decide: serving the decision UI at http://%s:%d/  (%d set(s))"
+          % (host, args.port, len(sets)))
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":

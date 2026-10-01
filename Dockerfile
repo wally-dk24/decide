@@ -23,8 +23,11 @@ COPY deps/${TARGETARCH}/ /usr/local/lib/python3.12/site-packages/
 
 WORKDIR /app
 COPY decide.py sets.yml ./
+COPY brand/ ./brand/
 ENV HOME=/tmp
 USER 1000
+EXPOSE 8080
 
+# Web UI: docker run -p 8080:8080 wallydk24/decide serve
 ENTRYPOINT ["python3", "/app/decide.py"]
 CMD ["--help"]

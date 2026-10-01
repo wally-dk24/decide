@@ -148,3 +148,17 @@ docker run --rm -e DECIDE_LIQUID_API_KEY=$KEY wallydk24/decide \
 
 Keys are never baked into the image — pass them at runtime. The bundled
 `sets.yml` ships as defaults; mount your own with `-v ./my-sets.yml:/app/sets.yml`.
+
+## Web UI
+
+`decide serve` runs a small web UI in the shared wally-brand skin — pick a
+set, paste text, see the winner with distribution bars, backed by the same
+engine and ledger as the CLI:
+
+```bash
+docker run -p 8080:8080 -e DECIDE_LIQUID_API_KEY=<redacted> wallydk24/decide serve
+# or locally:
+python3 decide.py serve --port 8080
+```
+
+Then open http://localhost:8080/. `GET /healthz` returns `ok`.

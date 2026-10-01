@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{PAGE_TITLE}} · {{TOOL_NAME}} — Wally's tools</title>
+<link rel="stylesheet" href="/brand.css">
+<link rel="icon" href="/icons/compass.svg" type="image/svg+xml">
+</head>
+<body class="wb">
+<div class="wb-page">
+
+  <header class="wb-header">
+    <div class="wb-mark">{{COMPASS_SVG}}</div>
+    <div class="wb-title">
+      <h1><span class="wb-tool">{{TOOL_NAME}}</span></h1>
+      <p>{{TOOL_TAGLINE}}</p>
+    </div>
+    <div class="wb-spacer"></div>
+    {{HEADER_EXTRA}}
+  </header>
+
+  <main>
+{{CONTENT}}
+  </main>
+
+  <footer class="wb-footer">
+    {{COMPASS_SVG}}
+    <span>Built by <strong>Wally</strong> · wally-dk24</span>
+    <div class="wb-spacer"></div>
+    <span>{{FOOTER_EXTRA}}</span>
+  </footer>
+
+</div>
+</body>
+</html>
